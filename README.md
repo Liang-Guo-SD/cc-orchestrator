@@ -32,7 +32,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ## Wire into Claude Code
 
-Add to `~/.claude/settings.json`:
+Add to `~/.claude/settings.json` (replace `/path/to/cc-orchestrator` with your actual clone path):
 
 ```json
 {
@@ -41,7 +41,7 @@ Add to `~/.claude/settings.json`:
       "command": "uv",
       "args": [
         "run",
-        "--project", "/Users/liangguo/My_Skills/cc-orchestrator",
+        "--project", "/path/to/cc-orchestrator",
         "cc-orchestrator"
       ]
     }
