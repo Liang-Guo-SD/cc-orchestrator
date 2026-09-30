@@ -139,7 +139,8 @@ def summarize(
         claims.files_changed = haiku_data["files_changed"]
     if claims.commit_hash is None and haiku_data.get("commit_hash"):
         claims.commit_hash = haiku_data["commit_hash"]
-    claims.important_findings = haiku_data.get("important_findings") or []
+    if not claims.important_findings:
+        claims.important_findings = haiku_data.get("important_findings") or []
 
     summary = haiku_data.get("summary", "")
     confidence = compute_confidence(claims, task_type)
