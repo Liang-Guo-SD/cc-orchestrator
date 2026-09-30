@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from cc_orchestrator.models import Claims, VerificationTarget
 
 
