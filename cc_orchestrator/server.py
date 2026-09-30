@@ -10,7 +10,7 @@ except ModuleNotFoundError:
     from mcp.server.mcpserver import MCPServer as _MCPClass  # type: ignore[assignment]
 
 from cc_orchestrator.config import load_config
-from cc_orchestrator.models import Claims, RunResult
+from cc_orchestrator.models import Claims
 from cc_orchestrator.summarizer import summarize
 from cc_orchestrator.verifier import generate_targets
 from cc_orchestrator.workers.opencode import OpenCodeAdapter
