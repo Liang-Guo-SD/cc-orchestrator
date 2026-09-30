@@ -9,6 +9,8 @@ from cc_orchestrator.workers.base import AdapterResult, WorkerAdapter
 
 
 class OpenCodeAdapter(WorkerAdapter):
+    _agent_name: str = "opencode"
+
     def __init__(
         self,
         config: WorkerConfig,
@@ -34,7 +36,7 @@ class OpenCodeAdapter(WorkerAdapter):
         cmd = [self._cfg.bin]
 
         if session == "continue":
-            stored = load_session(self._sessions_dir, "opencode", project_key)
+            stored = load_session(self._sessions_dir, self._agent_name, project_key)
             if stored and self._cfg.continue_flag:
                 cmd += [self._cfg.continue_flag]
                 if self._cfg.session_id_flag:
