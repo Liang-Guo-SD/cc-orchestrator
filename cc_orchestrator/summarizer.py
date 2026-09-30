@@ -36,9 +36,16 @@ def extract_claims_rule_based(
     all_patterns = {**_BUILTIN_PATTERNS, **patterns}
     raw: dict[str, str] = {}
     for field, pattern in all_patterns.items():
-        m = re.search(pattern, text)
-        if m:
-            raw[field] = m.group(1)
+        matches = list(re.finditer(pattern, text))
+        if matches:
+            raw[field] = matches[-1].group(1)
+
+    # When pytest summary found, absent failed/error counts mean zero
+    if "tests_passed" in raw:
+        if "tests_failed" not in raw:
+            raw["tests_failed"] = "0"
+        if "tests_error" not in raw:
+            raw["tests_error"] = "0"
 
     files_changed: list[str] | None = None
     if "files_changed" in raw:
@@ -93,7 +100,10 @@ def summarize_with_haiku(
         max_tokens=512,
         messages=[{"role": "user", "content": _HAIKU_PROMPT.format(tail=text_tail)}],
     )
-    return json.loads(msg.content[0].text)
+    result = json.loads(msg.content[0].text)
+    if not isinstance(result, dict):
+        raise ValueError(f"Haiku returned non-dict: {type(result)}")
+    return result
 
 
 def summarize(
@@ -132,13 +142,19 @@ def summarize(
 
     # Merge: rule-based fields are authoritative; Haiku fills nulls.
     if claims.tests_passed is None and haiku_data.get("tests_passed") is not None:
-        claims.tests_passed = haiku_data["tests_passed"]
+        v = haiku_data["tests_passed"]
+        if isinstance(v, int):
+            claims.tests_passed = v
     if claims.tests_failed is None and haiku_data.get("tests_failed") is not None:
-        claims.tests_failed = haiku_data["tests_failed"]
+        v = haiku_data["tests_failed"]
+        if isinstance(v, int):
+            claims.tests_failed = v
     if claims.files_changed is None and haiku_data.get("files_changed"):
         claims.files_changed = haiku_data["files_changed"]
     if claims.commit_hash is None and haiku_data.get("commit_hash"):
-        claims.commit_hash = haiku_data["commit_hash"]
+        raw_hash = haiku_data["commit_hash"]
+        if isinstance(raw_hash, str) and re.fullmatch(r"[0-9a-f]{7,40}", raw_hash):
+            claims.commit_hash = raw_hash
     if not claims.important_findings:
         claims.important_findings = haiku_data.get("important_findings") or []
 

@@ -32,7 +32,15 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ## Wire into Claude Code
 
-Add to `~/.claude/settings.json` (replace `/path/to/cc-orchestrator` with your actual clone path):
+Run once to register the MCP server:
+
+```bash
+claude mcp add cc-orchestrator -- uv run --project /path/to/cc-orchestrator cc-orchestrator
+```
+
+Replace `/path/to/cc-orchestrator` with your actual clone path. Restart Claude Code. You now have two new tools: `dispatch_worker` and `get_run_output`.
+
+Alternatively, add a project-level `.mcp.json` at the root of your repo:
 
 ```json
 {
@@ -49,9 +57,6 @@ Add to `~/.claude/settings.json` (replace `/path/to/cc-orchestrator` with your a
 }
 ```
 
-Restart Claude Code. You now have two new tools: `dispatch_worker` and
-`get_run_output`.
-
 ## Usage (from Claude Code)
 
 ```
@@ -65,6 +70,11 @@ dispatch_worker(
 
 Claude Code receives structured claims + verification targets it can
 independently confirm with Bash.
+
+## Known v1 Limitations
+
+- **`session="continue"` always falls back to `"new"`**: Worker session IDs are not yet captured from CLI output. This is a no-op in v1; all dispatches start fresh.
+- **Project key is the working directory folder name**: Two projects with the same folder name share a session file. Use distinct folder names for now.
 
 ## Contributing
 

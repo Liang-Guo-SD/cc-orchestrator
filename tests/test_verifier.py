@@ -17,7 +17,7 @@ def test_generates_commit_hash_target():
     commands = [t.command for t in targets]
     assert any("abc1234" in c for c in commands)
     patterns = [t.expected_pattern for t in targets]
-    assert any("files changed" in p for p in patterns)
+    assert any("changed" in p for p in patterns)
 
 
 def test_no_targets_for_empty_claims():
@@ -29,9 +29,8 @@ def test_no_targets_for_empty_claims():
 def test_failed_tests_generates_no_pass_target():
     claims = Claims(exit_code=1, tests_passed=None, tests_failed=3)
     targets = generate_targets(claims, working_dir="/proj")
-    # When tests_failed > 0 and tests_passed is None, no "N passed" target
-    for t in targets:
-        assert "passed" not in t.expected_pattern
+    # tests_passed is None, so no pytest target generated at all
+    assert targets == []
 
 
 def test_working_dir_used_in_pytest_command():

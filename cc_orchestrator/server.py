@@ -105,7 +105,10 @@ def _handle_dispatch(
     else:
         status = "completed"
 
-    targets = generate_targets(claims, working_dir)
+    if status == "low_confidence":
+        targets = []  # spec §5.3: empty when low_confidence
+    else:
+        targets = generate_targets(claims, working_dir)
 
     return {
         "run_id": run_id,

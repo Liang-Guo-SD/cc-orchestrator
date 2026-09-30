@@ -43,6 +43,14 @@ def test_extracts_files_changed_count():
     assert len(claims.files_changed) == 8
 
 
+def test_extracts_tests_failed_defaults_to_zero_when_tests_passed():
+    output = "42 passed in 1.23s\n"
+    claims = extract_claims_rule_based(output, exit_code=0, patterns={})
+    assert claims.tests_passed == 42
+    assert claims.tests_failed == 0
+    assert claims.tests_error == 0
+
+
 def test_exit_code_stored():
     claims = extract_claims_rule_based("some output", exit_code=42, patterns={})
     assert claims.exit_code == 42
