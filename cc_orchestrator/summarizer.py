@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import anthropic
 from cc_orchestrator.models import Claims
 
 # Built-in patterns applied to every run regardless of adapter.
@@ -62,3 +64,83 @@ def compute_confidence(claims: Claims, task_type: str) -> float:
         1 for f in expected if getattr(claims, f, None) is not None
     )
     return populated / len(expected)
+
+
+_HAIKU_PROMPT = """\
+This is the tail of a software engineering task's terminal output.
+Extract as JSON with exactly these keys:
+"summary" (one sentence string),
+"tests_passed" (integer or null),
+"tests_failed" (integer or null),
+"files_changed" (list of strings or null),
+"commit_hash" (string or null),
+"important_findings" (list of up to 3 strings).
+Respond with only the JSON object, no markdown fences.
+
+Output:
+{tail}"""
+
+
+def summarize_with_haiku(
+    text_tail: str,
+    haiku_model: str,
+    api_key: str,
+) -> dict:
+    """Call Haiku and return parsed JSON dict. Raises on API error."""
+    client = anthropic.Anthropic(api_key=api_key)
+    msg = client.messages.create(
+        model=haiku_model,
+        max_tokens=512,
+        messages=[{"role": "user", "content": _HAIKU_PROMPT.format(tail=text_tail)}],
+    )
+    return json.loads(msg.content[0].text)
+
+
+def summarize(
+    raw_text: str,
+    exit_code: int,
+    task_type: str,
+    adapter_patterns: dict[str, str],
+    haiku_model: str,
+    api_key: str | None,
+) -> tuple[Claims, str, float]:
+    """Full hybrid pipeline. Returns (claims, summary_sentence, confidence)."""
+    claims = extract_claims_rule_based(raw_text, exit_code, adapter_patterns)
+    confidence = compute_confidence(claims, task_type)
+
+    if confidence >= 0.6:
+        # High confidence: skip Haiku; generate terse prose summary locally.
+        parts = []
+        if claims.tests_passed is not None:
+            parts.append(f"{claims.tests_passed} passed")
+        if claims.tests_failed:
+            parts.append(f"{claims.tests_failed} failed")
+        if claims.commit_hash:
+            parts.append(f"commit {claims.commit_hash}")
+        summary = "; ".join(parts) if parts else "completed"
+        return claims, summary, confidence
+
+    # Low confidence: try Haiku.
+    if api_key is None:
+        return claims, "", confidence
+
+    tail = "\n".join(raw_text.splitlines()[-200:])
+    try:
+        haiku_data = summarize_with_haiku(tail, haiku_model, api_key)
+    except (anthropic.AuthenticationError, anthropic.APIError, json.JSONDecodeError):
+        return claims, "", confidence
+
+    # Merge: rule-based fields are authoritative; Haiku fills nulls.
+    if claims.tests_passed is None and haiku_data.get("tests_passed") is not None:
+        claims.tests_passed = haiku_data["tests_passed"]
+    if claims.tests_failed is None and haiku_data.get("tests_failed") is not None:
+        claims.tests_failed = haiku_data["tests_failed"]
+    if claims.files_changed is None and haiku_data.get("files_changed"):
+        claims.files_changed = haiku_data["files_changed"]
+    if claims.commit_hash is None and haiku_data.get("commit_hash"):
+        claims.commit_hash = haiku_data["commit_hash"]
+    claims.important_findings = haiku_data.get("important_findings") or []
+
+    summary = haiku_data.get("summary", "")
+    confidence = compute_confidence(claims, task_type)
+    return claims, summary, confidence
