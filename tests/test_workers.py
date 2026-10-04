@@ -4,11 +4,11 @@ from unittest.mock import patch, MagicMock, AsyncMock
 import pytest
 
 from cc_orchestrator.config import WorkerConfig
-from cc_orchestrator.workers.opencode import OpenCodeAdapter
+from cc_orchestrator.workers.pi import PiAdapter
 from cc_orchestrator.session_store import load_session, save_session
 
 
-def _cfg(bin_name: str = "opencode") -> WorkerConfig:
+def _cfg(bin_name: str = "pi") -> WorkerConfig:
     return WorkerConfig(
         bin=bin_name,
         new_session_flag="--new-session",
@@ -26,7 +26,7 @@ async def _stdout_lines(*lines: bytes):
 async def test_adapter_writes_output_to_file(tmp_path):
     runs_dir = tmp_path / "runs"
     sessions_dir = tmp_path / "sessions"
-    adapter = OpenCodeAdapter(_cfg(), runs_dir, sessions_dir)
+    adapter = PiAdapter(_cfg(), runs_dir, sessions_dir)
     output_file = tmp_path / "output.txt"
 
     fake_proc = MagicMock()
@@ -50,7 +50,7 @@ async def test_adapter_writes_output_to_file(tmp_path):
 async def test_adapter_returns_exit_code_127_when_binary_missing(tmp_path):
     runs_dir = tmp_path / "runs"
     sessions_dir = tmp_path / "sessions"
-    adapter = OpenCodeAdapter(_cfg(bin_name="nonexistent_binary_xyz"), runs_dir, sessions_dir)
+    adapter = PiAdapter(_cfg(bin_name="nonexistent_binary_xyz"), runs_dir, sessions_dir)
     output_file = tmp_path / "output.txt"
 
     result = await adapter.run(
@@ -70,7 +70,7 @@ async def test_adapter_returns_exit_code_127_when_binary_missing(tmp_path):
 async def test_adapter_returns_timeout_exit_code(tmp_path):
     runs_dir = tmp_path / "runs"
     sessions_dir = tmp_path / "sessions"
-    adapter = OpenCodeAdapter(_cfg(), runs_dir, sessions_dir)
+    adapter = PiAdapter(_cfg(), runs_dir, sessions_dir)
     output_file = tmp_path / "output.txt"
 
     async def _hangs_forever():
@@ -98,29 +98,29 @@ async def test_adapter_returns_timeout_exit_code(tmp_path):
 def test_session_continue_falls_back_to_new_when_no_stored_session(tmp_path):
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir()
-    session_id = load_session(sessions_dir, agent="opencode", project_key="proj-abc")
+    session_id = load_session(sessions_dir, agent="pi", project_key="proj-abc")
     assert session_id is None  # no session stored yet
 
 
 def test_session_save_and_load_roundtrip(tmp_path):
     sessions_dir = tmp_path / "sessions"
     sessions_dir.mkdir()
-    save_session(sessions_dir, agent="opencode", project_key="proj-abc", session_id="sess-123")
-    loaded = load_session(sessions_dir, agent="opencode", project_key="proj-abc")
+    save_session(sessions_dir, agent="pi", project_key="proj-abc", session_id="sess-123")
+    loaded = load_session(sessions_dir, agent="pi", project_key="proj-abc")
     assert loaded == "sess-123"
 
 
 @pytest.mark.asyncio
 async def test_command_prefix_is_inserted_before_extra_flags(tmp_path):
     cfg = WorkerConfig(
-        bin="opencode",
+        bin="pi",
         new_session_flag="",
         continue_flag="",
         session_id_flag="",
         extra_flags=["--auto", "--format", "json"],
         command_prefix=["run"],
     )
-    adapter = OpenCodeAdapter(cfg, tmp_path / "runs", tmp_path / "sessions")
+    adapter = PiAdapter(cfg, tmp_path / "runs", tmp_path / "sessions")
     output_file = tmp_path / "output.txt"
 
     fake_proc = MagicMock()
@@ -137,4 +137,4 @@ async def test_command_prefix_is_inserted_before_extra_flags(tmp_path):
         )
 
     called_args = mock_exec.call_args.args
-    assert called_args[:6] == ("opencode", "run", "--auto", "--format", "json", "do something")
+    assert called_args[:6] == ("pi", "run", "--auto", "--format", "json", "do something")

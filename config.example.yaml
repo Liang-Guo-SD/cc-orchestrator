@@ -3,26 +3,16 @@ max_retries: 3
 # Role convention enforced by the server (see ROLE_ASSIGNMENTS in server.py):
 #   task_type="implementation"     -> agent="pi"      (implements stories)
 #   task_type="code_review_heavy"  -> agent="qoder"   (thorough/slow review)
-#   task_type="code_review_light"  -> agent="opencode" (fast/first-pass review)
-# Dispatch independent reviewers (qoder + opencode, or add more) in parallel —
-# dispatch_worker runs each CLI as an asyncio subprocess, so concurrent calls
-# don't queue behind each other.
+#   task_type="code_review_light"  -> unrestricted    (fast/first-pass review;
+#                                       dispatch to qoder or pi for a second opinion)
+# Dispatch independent reviewers in parallel — dispatch_worker runs each CLI as
+# an asyncio subprocess, so concurrent calls don't queue behind each other.
+#
+# OpenCode was removed as a worker: its headless-mode CLI invocation kept
+# regressing back to printing top-level --help instead of running, across
+# multiple fix attempts. Pi and Qoder have run reliably in headless mode.
 
 workers:
-  opencode:
-    # Invocation: opencode run --auto --format json <prompt>
-    # IMPORTANT: the bare `opencode --prompt <msg>` form starts the default TUI
-    # command with a pre-seeded message — it does NOT run headless and will not
-    # exit on its own. The `run` subcommand is the actual non-interactive mode.
-    bin: opencode              # binary name or absolute path  # CONFIGURE THIS
-    command_prefix: ["run"]    # `opencode run [message]` is the headless form
-    extra_flags:
-      - "--auto"               # auto-approve permissions
-      - "--format"
-      - "json"
-    new_session_flag: ""       # CLI flag for a fresh session   # CONFIGURE THIS
-    continue_flag: "--continue"
-    session_id_flag: "--session"
   pi:
     # Invocation: pi --approve --print <prompt>
     # -p/--print is required for non-interactive mode; without it pi also

@@ -8,8 +8,10 @@ from cc_orchestrator.session_store import load_session, save_session
 from cc_orchestrator.workers.base import AdapterResult, WorkerAdapter
 
 
-class OpenCodeAdapter(WorkerAdapter):
-    _agent_name: str = "opencode"
+class CliAdapter(WorkerAdapter):
+    """Generic subprocess-based adapter for a headless-CLI worker agent."""
+
+    _agent_name: str
 
     def __init__(
         self,
@@ -22,7 +24,7 @@ class OpenCodeAdapter(WorkerAdapter):
         self._sessions_dir = sessions_dir
 
     def extraction_patterns(self) -> dict[str, str]:
-        return {}  # OpenCode uses standard tool outputs; built-ins cover it
+        return {}  # standard tool outputs; built-ins cover it
 
     async def run(
         self,

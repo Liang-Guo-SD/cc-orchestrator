@@ -1,9 +1,14 @@
 # cc-orchestrator
 
 A lightweight MCP server for Claude Code that dispatches tasks to worker CLI
-agents (OpenCode, Pi Agent, Qoder), captures their output, and returns
-structured summaries with verification targets — eliminating manual
-clipboard middleware.
+agents (Pi Agent, Qoder), captures their output, and returns structured
+summaries with verification targets — eliminating manual clipboard
+middleware.
+
+OpenCode was supported in earlier versions but was removed: its headless-mode
+CLI invocation repeatedly regressed back to printing top-level `--help`
+instead of running the prompt, across multiple fix attempts. Pi and Qoder
+have run reliably in headless mode.
 
 ## Installation
 
@@ -80,17 +85,17 @@ The server enforces a default role mapping between `task_type` and `agent`
 |---|---|---|
 | `implementation` | `pi` | Implements stories/fixes |
 | `code_review_heavy` | `qoder` | Thorough, slower review pass |
-| `code_review_light` | `opencode` | Fast, first-pass review |
 
-Other `task_type` values (`verification`, `close_out`, `code_review`) are
-unrestricted. Because `dispatch_worker` runs each CLI as an asyncio
-subprocess, independent calls — e.g. dispatching `qoder` and `opencode` to
-review the same diff — execute concurrently rather than queuing behind each
-other:
+`code_review_light` and other `task_type` values (`verification`,
+`close_out`, `code_review`) are unrestricted — dispatch to `qoder` or `pi`
+for a fast/independent second opinion. Because `dispatch_worker` runs each
+CLI as an asyncio subprocess, independent calls — e.g. two fresh sessions
+reviewing the same diff — execute concurrently rather than queuing behind
+each other:
 
 ```
 dispatch_worker(agent="qoder", task_type="code_review_heavy", prompt="...", working_dir="...")
-dispatch_worker(agent="opencode", task_type="code_review_light", prompt="...", working_dir="...")
+dispatch_worker(agent="pi", task_type="code_review_light", prompt="...", working_dir="...")
 ```
 
 Issue both calls in the same turn and they run in parallel.
@@ -100,16 +105,12 @@ Issue both calls in the same turn and they run in parallel.
 Each worker CLI defaults to an interactive TUI; the config must point at its
 *non-interactive* mode or the subprocess will never exit:
 
-- **OpenCode**: the bare `opencode --prompt <msg>` form starts the default
-  TUI with a pre-seeded message — it does **not** run headless. Use the
-  `opencode run [message]` subcommand instead (set `command_prefix: ["run"]`
-  in config), with `--auto --format json`.
 - **Pi**: requires `-p`/`--print` in `extra_flags`, or it drops into its
   interactive session instead of processing the prompt and exiting.
 - **Qoder**: requires `-p`/`--print` in `extra_flags` (not conditional on
   `new_session_flag`, so it still applies on a `continue` dispatch).
 
-`config.example.yaml` has all three configured correctly as a reference.
+`config.example.yaml` has both configured correctly as a reference.
 
 ## Known v1 Limitations
 
@@ -120,4 +121,4 @@ Each worker CLI defaults to an interactive TUI; the config must point at its
 
 See `config.example.yaml` for `# CONFIGURE THIS` flags. Each worker adapter
 in `cc_orchestrator/workers/` is the only CLI-specific code — PRs that add
-accurate flags for OpenCode, Pi, or Qoder are welcome.
+accurate flags for Pi or Qoder, or a new worker CLI, are welcome.

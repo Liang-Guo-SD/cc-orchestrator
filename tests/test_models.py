@@ -40,7 +40,7 @@ def test_run_result_parent_run_id_defaults_none():
     from cc_orchestrator.models import Claims
     r = RunResult(
         run_id="run-001",
-        agent="opencode",
+        agent="pi",
         status="completed",
         summary="all good",
         claims=Claims(exit_code=0),

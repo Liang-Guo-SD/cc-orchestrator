@@ -1,8 +1,8 @@
-from cc_orchestrator.workers.opencode import OpenCodeAdapter
+from cc_orchestrator.workers.cli_adapter import CliAdapter
 
 
-class QoderAdapter(OpenCodeAdapter):
-    """Qoder CLI adapter. Same subprocess pattern as OpenCode."""
+class QoderAdapter(CliAdapter):
+    """Qoder CLI adapter."""
     _agent_name = "qoder"
 
     def extraction_patterns(self) -> dict[str, str]:

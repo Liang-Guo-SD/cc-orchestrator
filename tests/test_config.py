@@ -15,16 +15,11 @@ def test_load_config_parses_valid_yaml(tmp_path):
     cfg_file.write_text("""
 max_retries: 2
 workers:
-  opencode:
-    bin: opencode
+  pi:
+    bin: pi
     new_session_flag: "--new"
     continue_flag: "--continue"
     session_id_flag: "--session"
-  pi:
-    bin: pi
-    new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
   qoder:
     bin: qoder
     new_session_flag: ""
@@ -35,8 +30,8 @@ anthropic_api_key_env: "ANTHROPIC_API_KEY"
 """)
     cfg = load_config(cfg_file)
     assert cfg.max_retries == 2
-    assert cfg.workers["opencode"].bin == "opencode"
-    assert cfg.workers["opencode"].new_session_flag == "--new"
+    assert cfg.workers["pi"].bin == "pi"
+    assert cfg.workers["pi"].new_session_flag == "--new"
     assert cfg.haiku_model == "claude-haiku-4-5-20251001"
 
 
@@ -47,11 +42,6 @@ def test_load_config_defaults_to_home_dir(monkeypatch, tmp_path):
     cfg_file.write_text("""
 max_retries: 3
 workers:
-  opencode:
-    bin: opencode
-    new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
   pi:
     bin: pi
     new_session_flag: ""

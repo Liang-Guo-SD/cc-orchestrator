@@ -13,19 +13,19 @@ from cc_orchestrator.config import load_config
 from cc_orchestrator.models import Claims
 from cc_orchestrator.summarizer import summarize
 from cc_orchestrator.verifier import generate_targets
-from cc_orchestrator.workers.opencode import OpenCodeAdapter
 from cc_orchestrator.workers.pi import PiAdapter
 from cc_orchestrator.workers.qoder import QoderAdapter
 
 mcp = _MCPClass("cc-orchestrator")
 
 # Role assignments: which agent(s) a task_type is expected to go to.
-# Pi implements; Qoder does heavy/thorough review; OpenCode does light/fast review.
+# Pi implements; Qoder does heavy/thorough review. OpenCode was removed after
+# repeated headless-mode regressions (see README). "code_review_light" is left
+# unrestricted — dispatch it to qoder or pi for a fast/independent second opinion.
 # Unlisted task_types (e.g. "verification", "close_out", "code_review") are unrestricted.
 ROLE_ASSIGNMENTS: dict[str, set[str]] = {
     "implementation": {"pi"},
     "code_review_heavy": {"qoder"},
-    "code_review_light": {"opencode"},
 }
 
 
@@ -50,7 +50,6 @@ def _make_run_id(agent: str) -> str:
 
 def _get_adapter(agent: str, config):
     adapters = {
-        "opencode": OpenCodeAdapter,
         "pi": PiAdapter,
         "qoder": QoderAdapter,
     }
@@ -97,7 +96,7 @@ async def _handle_dispatch(
     adapter = _get_adapter(agent, config)
 
     if adapter is None:
-        return _error_result(agent, f"unknown agent '{agent}'; valid agents: opencode, pi, qoder")
+        return _error_result(agent, f"unknown agent '{agent}'; valid agents: pi, qoder")
 
     runs_dir = _base_dir() / "runs"
     run_id = _make_run_id(agent)
@@ -185,12 +184,13 @@ async def dispatch_worker(
     Role convention (enforced unless override_role=True):
       - task_type="implementation"     -> agent="pi"
       - task_type="code_review_heavy"  -> agent="qoder"
-      - task_type="code_review_light"  -> agent="opencode"
-    Other task_types (e.g. "verification", "close_out", "code_review") are unrestricted.
+    Other task_types (e.g. "code_review_light", "verification", "close_out",
+    "code_review") are unrestricted.
 
     Runs the worker CLI as an asyncio subprocess, so independent dispatch_worker
-    calls (e.g. qoder + opencode reviewing the same diff) can be issued together
-    and will execute concurrently rather than queueing behind each other.
+    calls (e.g. two fresh sessions reviewing the same diff for a second opinion)
+    can be issued together and will execute concurrently rather than queueing
+    behind each other.
     """
     return await _handle_dispatch(
         agent, prompt, session, working_dir, timeout_s, task_type, override_role

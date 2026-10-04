@@ -1,8 +1,8 @@
-from cc_orchestrator.workers.opencode import OpenCodeAdapter
+from cc_orchestrator.workers.cli_adapter import CliAdapter
 
 
-class PiAdapter(OpenCodeAdapter):
-    """Pi Agent CLI adapter. Same subprocess pattern as OpenCode."""
+class PiAdapter(CliAdapter):
+    """Pi Agent CLI adapter."""
     _agent_name = "pi"
 
     def extraction_patterns(self) -> dict[str, str]:

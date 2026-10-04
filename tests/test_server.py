@@ -13,11 +13,6 @@ def _write_config(tmp_path: Path) -> Path:
     cfg.write_text("""
 max_retries: 3
 workers:
-  opencode:
-    bin: echo
-    new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
   pi:
     bin: echo
     new_session_flag: ""
@@ -85,7 +80,7 @@ async def test_dispatch_rejects_role_mismatch(tmp_path, monkeypatch):
     _setup_home(tmp_path, monkeypatch)
 
     result = await _handle_dispatch(
-        agent="opencode",
+        agent="qoder",
         prompt="implement the thing",
         session="new",
         working_dir=str(tmp_path),
@@ -102,7 +97,7 @@ async def test_dispatch_override_role_bypasses_mismatch(tmp_path, monkeypatch):
     _setup_home(tmp_path, monkeypatch)
 
     result = await _handle_dispatch(
-        agent="opencode",
+        agent="qoder",
         prompt="implement the thing",
         session="new",
         working_dir=str(tmp_path),
@@ -111,7 +106,7 @@ async def test_dispatch_override_role_bypasses_mismatch(tmp_path, monkeypatch):
         override_role=True,
     )
     assert result["status"] in ("completed", "failed", "low_confidence")
-    assert result["agent"] == "opencode"
+    assert result["agent"] == "qoder"
 
 
 @pytest.mark.asyncio
@@ -123,7 +118,7 @@ async def test_dispatch_review_role_assignments(tmp_path, monkeypatch):
         timeout_s=10, task_type="code_review_heavy",
     )
     light = await _handle_dispatch(
-        agent="opencode", prompt="review", session="new", working_dir=str(tmp_path),
+        agent="pi", prompt="review", session="new", working_dir=str(tmp_path),
         timeout_s=10, task_type="code_review_light",
     )
     mismatched = await _handle_dispatch(
@@ -144,7 +139,7 @@ async def test_parallel_dispatches_run_concurrently(tmp_path, monkeypatch):
     (tmp_path / ".cc-orchestrator" / "config.yaml").write_text("""
 max_retries: 3
 workers:
-  opencode:
+  pi:
     bin: sh
     command_prefix: ["-c"]
     new_session_flag: ""
@@ -169,7 +164,7 @@ anthropic_api_key_env: "ANTHROPIC_API_KEY"
             working_dir=str(tmp_path), timeout_s=10, task_type="code_review_heavy",
         ),
         _handle_dispatch(
-            agent="opencode", prompt="sleep 1 && echo light done", session="new",
+            agent="pi", prompt="sleep 1 && echo light done", session="new",
             working_dir=str(tmp_path), timeout_s=10, task_type="code_review_light",
         ),
     )
