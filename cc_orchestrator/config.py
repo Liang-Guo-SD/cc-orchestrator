@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -18,6 +18,12 @@ class WorkerConfig:
     new_session_flag: str
     continue_flag: str
     session_id_flag: str
+    extra_flags: list[str] = None  # type: ignore[assignment]
+    command_prefix: list[str] = field(default_factory=list)  # e.g. ["run"] for `opencode run`
+
+    def __post_init__(self) -> None:
+        if self.extra_flags is None:
+            self.extra_flags = []
 
 
 @dataclass
@@ -41,6 +47,8 @@ def load_config(path: Path | None = None) -> OrchestratorConfig:
             new_session_flag=entry.get("new_session_flag", ""),
             continue_flag=entry.get("continue_flag", ""),
             session_id_flag=entry.get("session_id_flag", ""),
+            extra_flags=list(entry.get("extra_flags", [])),
+            command_prefix=list(entry.get("command_prefix", [])),
         )
         for name, entry in data["workers"].items()
     }

@@ -15,7 +15,7 @@ class WorkerAdapter(ABC):
     """Each worker CLI adapter implements this interface."""
 
     @abstractmethod
-    def run(
+    async def run(
         self,
         prompt: str,
         session: str,
@@ -23,7 +23,12 @@ class WorkerAdapter(ABC):
         timeout_s: int,
         output_file: Path,
     ) -> AdapterResult:
-        """Spawn the worker CLI, write all output to output_file, return exit code."""
+        """Spawn the worker CLI, write all output to output_file, return exit code.
+
+        Must use asyncio subprocess (not subprocess.run) so concurrent
+        dispatch_worker calls can run multiple workers in parallel on one
+        event loop.
+        """
         ...
 
     @abstractmethod

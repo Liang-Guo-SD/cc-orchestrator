@@ -19,6 +19,25 @@ from cc_orchestrator.workers.qoder import QoderAdapter
 
 mcp = _MCPClass("cc-orchestrator")
 
+# Role assignments: which agent(s) a task_type is expected to go to.
+# Pi implements; Qoder does heavy/thorough review; OpenCode does light/fast review.
+# Unlisted task_types (e.g. "verification", "close_out", "code_review") are unrestricted.
+ROLE_ASSIGNMENTS: dict[str, set[str]] = {
+    "implementation": {"pi"},
+    "code_review_heavy": {"qoder"},
+    "code_review_light": {"opencode"},
+}
+
+
+def _role_mismatch(agent: str, task_type: str) -> str | None:
+    allowed = ROLE_ASSIGNMENTS.get(task_type)
+    if allowed is None or agent in allowed:
+        return None
+    return (
+        f"task_type '{task_type}' is assigned to {sorted(allowed)}, got agent='{agent}'. "
+        f"Pass override_role=True to bypass this convention."
+    )
+
 
 def _base_dir() -> Path:
     return Path.home() / ".cc-orchestrator"
@@ -45,30 +64,40 @@ def _get_adapter(agent: str, config):
     return adapters[agent](worker_cfg, runs_dir, sessions_dir)
 
 
-def _handle_dispatch(
+def _error_result(agent: str, summary: str) -> dict:
+    return {
+        "run_id": "run-error",
+        "agent": agent,
+        "status": "failed",
+        "summary": summary,
+        "claims": {"exit_code": 1, "tests_passed": None, "tests_failed": None,
+                   "tests_error": None, "files_changed": None, "commit_hash": None,
+                   "important_findings": []},
+        "verification_targets": [],
+        "raw_output_path": "",
+        "parent_run_id": None,
+    }
+
+
+async def _handle_dispatch(
     agent: str,
     prompt: str,
     session: str,
     working_dir: str,
     timeout_s: int,
     task_type: str,
+    override_role: bool = False,
 ) -> dict:
+    if not override_role:
+        mismatch = _role_mismatch(agent, task_type)
+        if mismatch:
+            return _error_result(agent, mismatch)
+
     config = load_config()
     adapter = _get_adapter(agent, config)
 
     if adapter is None:
-        return {
-            "run_id": "run-error",
-            "agent": agent,
-            "status": "failed",
-            "summary": f"unknown agent '{agent}'; valid agents: opencode, pi, qoder",
-            "claims": {"exit_code": 1, "tests_passed": None, "tests_failed": None,
-                       "tests_error": None, "files_changed": None, "commit_hash": None,
-                       "important_findings": []},
-            "verification_targets": [],
-            "raw_output_path": "",
-            "parent_run_id": None,
-        }
+        return _error_result(agent, f"unknown agent '{agent}'; valid agents: opencode, pi, qoder")
 
     runs_dir = _base_dir() / "runs"
     run_id = _make_run_id(agent)
@@ -76,7 +105,7 @@ def _handle_dispatch(
     run_dir.mkdir(parents=True, exist_ok=True)
     output_file = run_dir / "output.txt"
 
-    adapter_result = adapter.run(
+    adapter_result = await adapter.run(
         prompt=prompt,
         session=session,
         working_dir=working_dir,
@@ -142,16 +171,30 @@ def _handle_get_output(run_id: str, lines: int = 100) -> str:
 
 
 @mcp.tool()
-def dispatch_worker(
+async def dispatch_worker(
     agent: str,
     prompt: str,
     session: str = "new",
     working_dir: str = ".",
     timeout_s: int = 1800,
     task_type: str = "implementation",
+    override_role: bool = False,
 ) -> dict:
-    """Dispatch a task prompt to a worker CLI agent and return structured results."""
-    return _handle_dispatch(agent, prompt, session, working_dir, timeout_s, task_type)
+    """Dispatch a task prompt to a worker CLI agent and return structured results.
+
+    Role convention (enforced unless override_role=True):
+      - task_type="implementation"     -> agent="pi"
+      - task_type="code_review_heavy"  -> agent="qoder"
+      - task_type="code_review_light"  -> agent="opencode"
+    Other task_types (e.g. "verification", "close_out", "code_review") are unrestricted.
+
+    Runs the worker CLI as an asyncio subprocess, so independent dispatch_worker
+    calls (e.g. qoder + opencode reviewing the same diff) can be issued together
+    and will execute concurrently rather than queueing behind each other.
+    """
+    return await _handle_dispatch(
+        agent, prompt, session, working_dir, timeout_s, task_type, override_role
+    )
 
 
 @mcp.tool()

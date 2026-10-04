@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 import pytest
@@ -33,15 +34,20 @@ anthropic_api_key_env: "ANTHROPIC_API_KEY"
     return cfg
 
 
-def test_dispatch_returns_run_result_dict(tmp_path, monkeypatch):
+def _setup_home(tmp_path: Path, monkeypatch) -> None:
     cfg_path = _write_config(tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / ".cc-orchestrator").mkdir()
     import shutil
     shutil.copy(cfg_path, tmp_path / ".cc-orchestrator" / "config.yaml")
 
-    result = _handle_dispatch(
-        agent="opencode",
+
+@pytest.mark.asyncio
+async def test_dispatch_returns_run_result_dict(tmp_path, monkeypatch):
+    _setup_home(tmp_path, monkeypatch)
+
+    result = await _handle_dispatch(
+        agent="pi",
         prompt="echo hello",
         session="new",
         working_dir=str(tmp_path),
@@ -50,33 +56,131 @@ def test_dispatch_returns_run_result_dict(tmp_path, monkeypatch):
     )
 
     assert "run_id" in result
-    assert result["agent"] == "opencode"
+    assert result["agent"] == "pi"
     assert result["status"] in ("completed", "failed", "low_confidence")
     assert "claims" in result
     assert "verification_targets" in result
     assert "raw_output_path" in result
 
 
-def test_dispatch_unknown_agent_returns_error(tmp_path, monkeypatch):
-    cfg_path = _write_config(tmp_path)
-    (tmp_path / ".cc-orchestrator").mkdir()
-    import shutil
-    shutil.copy(cfg_path, tmp_path / ".cc-orchestrator" / "config.yaml")
-    monkeypatch.setenv("HOME", str(tmp_path))
+@pytest.mark.asyncio
+async def test_dispatch_unknown_agent_returns_error(tmp_path, monkeypatch):
+    _setup_home(tmp_path, monkeypatch)
 
-    result = _handle_dispatch(
+    result = await _handle_dispatch(
         agent="unknown_agent_xyz",
         prompt="do something",
         session="new",
         working_dir=str(tmp_path),
         timeout_s=10,
         task_type="implementation",
+        override_role=True,  # bypass role check so we exercise the unknown-agent path
     )
     assert result["status"] == "failed"
     assert "unknown" in result["summary"].lower()
 
 
-def test_get_output_returns_last_n_lines(tmp_path, monkeypatch):
+@pytest.mark.asyncio
+async def test_dispatch_rejects_role_mismatch(tmp_path, monkeypatch):
+    _setup_home(tmp_path, monkeypatch)
+
+    result = await _handle_dispatch(
+        agent="opencode",
+        prompt="implement the thing",
+        session="new",
+        working_dir=str(tmp_path),
+        timeout_s=10,
+        task_type="implementation",
+    )
+    assert result["status"] == "failed"
+    assert "pi" in result["summary"]
+    assert "override_role" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_override_role_bypasses_mismatch(tmp_path, monkeypatch):
+    _setup_home(tmp_path, monkeypatch)
+
+    result = await _handle_dispatch(
+        agent="opencode",
+        prompt="implement the thing",
+        session="new",
+        working_dir=str(tmp_path),
+        timeout_s=10,
+        task_type="implementation",
+        override_role=True,
+    )
+    assert result["status"] in ("completed", "failed", "low_confidence")
+    assert result["agent"] == "opencode"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_review_role_assignments(tmp_path, monkeypatch):
+    _setup_home(tmp_path, monkeypatch)
+
+    heavy = await _handle_dispatch(
+        agent="qoder", prompt="review", session="new", working_dir=str(tmp_path),
+        timeout_s=10, task_type="code_review_heavy",
+    )
+    light = await _handle_dispatch(
+        agent="opencode", prompt="review", session="new", working_dir=str(tmp_path),
+        timeout_s=10, task_type="code_review_light",
+    )
+    mismatched = await _handle_dispatch(
+        agent="pi", prompt="review", session="new", working_dir=str(tmp_path),
+        timeout_s=10, task_type="code_review_heavy",
+    )
+
+    assert heavy["status"] != "failed" or "unknown" not in heavy["summary"].lower()
+    assert light["status"] != "failed" or "unknown" not in light["summary"].lower()
+    assert mismatched["status"] == "failed"
+    assert "qoder" in mismatched["summary"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_dispatches_run_concurrently(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".cc-orchestrator").mkdir()
+    (tmp_path / ".cc-orchestrator" / "config.yaml").write_text("""
+max_retries: 3
+workers:
+  opencode:
+    bin: sh
+    command_prefix: ["-c"]
+    new_session_flag: ""
+    continue_flag: ""
+    session_id_flag: ""
+  qoder:
+    bin: sh
+    command_prefix: ["-c"]
+    new_session_flag: ""
+    continue_flag: ""
+    session_id_flag: ""
+haiku_model: "claude-haiku-4-5-20251001"
+anthropic_api_key_env: "ANTHROPIC_API_KEY"
+""")
+
+    import asyncio
+
+    start = time.monotonic()
+    results = await asyncio.gather(
+        _handle_dispatch(
+            agent="qoder", prompt="sleep 1 && echo heavy done", session="new",
+            working_dir=str(tmp_path), timeout_s=10, task_type="code_review_heavy",
+        ),
+        _handle_dispatch(
+            agent="opencode", prompt="sleep 1 && echo light done", session="new",
+            working_dir=str(tmp_path), timeout_s=10, task_type="code_review_light",
+        ),
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.8  # two serial subprocesses would take >= 2s
+    assert all("run_id" in r for r in results)
+
+
+@pytest.mark.asyncio
+async def test_get_output_returns_last_n_lines(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     runs_dir = tmp_path / ".cc-orchestrator" / "runs" / "run-test-001"
     runs_dir.mkdir(parents=True)

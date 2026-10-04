@@ -1,21 +1,48 @@
 max_retries: 3
 
+# Role convention enforced by the server (see ROLE_ASSIGNMENTS in server.py):
+#   task_type="implementation"     -> agent="pi"      (implements stories)
+#   task_type="code_review_heavy"  -> agent="qoder"   (thorough/slow review)
+#   task_type="code_review_light"  -> agent="opencode" (fast/first-pass review)
+# Dispatch independent reviewers (qoder + opencode, or add more) in parallel —
+# dispatch_worker runs each CLI as an asyncio subprocess, so concurrent calls
+# don't queue behind each other.
+
 workers:
   opencode:
+    # Invocation: opencode run --auto --format json <prompt>
+    # IMPORTANT: the bare `opencode --prompt <msg>` form starts the default TUI
+    # command with a pre-seeded message — it does NOT run headless and will not
+    # exit on its own. The `run` subcommand is the actual non-interactive mode.
     bin: opencode              # binary name or absolute path  # CONFIGURE THIS
+    command_prefix: ["run"]    # `opencode run [message]` is the headless form
+    extra_flags:
+      - "--auto"               # auto-approve permissions
+      - "--format"
+      - "json"
     new_session_flag: ""       # CLI flag for a fresh session   # CONFIGURE THIS
-    continue_flag: ""          # CLI flag to resume a session   # CONFIGURE THIS
-    session_id_flag: ""        # CLI flag to pass session ID    # CONFIGURE THIS
+    continue_flag: "--continue"
+    session_id_flag: "--session"
   pi:
+    # Invocation: pi --approve --print <prompt>
+    # -p/--print is required for non-interactive mode; without it pi also
+    # drops into its interactive TUI and never reports completion.
     bin: pi
+    extra_flags:
+      - "--approve"            # trust project-local files for this run
+      - "--print"              # non-interactive mode: process prompt and exit
     new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
+    continue_flag: "--continue"
+    session_id_flag: "--session"
   qoder:
+    # Invocation: qoder --dangerously-skip-permissions --print <prompt>
     bin: qoder
+    extra_flags:
+      - "--dangerously-skip-permissions"
+      - "--print"              # non-interactive mode
     new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
+    continue_flag: "--continue"
+    session_id_flag: "--resume"
 
 haiku_model: "claude-haiku-4-5-20251001"
 anthropic_api_key_env: "ANTHROPIC_API_KEY"
