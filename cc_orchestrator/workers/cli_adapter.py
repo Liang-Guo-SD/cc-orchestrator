@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Callable
 
 from cc_orchestrator.config import WorkerConfig
 from cc_orchestrator.session_store import load_session, save_session
@@ -33,6 +34,7 @@ class CliAdapter(WorkerAdapter):
         working_dir: str,
         timeout_s: int,
         output_file: Path,
+        on_started: Callable[[asyncio.subprocess.Process], None] | None = None,
     ) -> AdapterResult:
         project_key = Path(working_dir).name
         cmd = [self._cfg.bin]
@@ -66,6 +68,9 @@ class CliAdapter(WorkerAdapter):
         except FileNotFoundError:
             output_file.write_text(f"error: binary '{self._cfg.bin}' not found on PATH\n")
             return AdapterResult(exit_code=127, session_id=None)
+
+        if on_started is not None:
+            on_started(proc)
 
         async def _drain_and_wait() -> int:
             with output_file.open("wb") as out_fh:

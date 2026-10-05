@@ -138,3 +138,88 @@ async def test_command_prefix_is_inserted_before_extra_flags(tmp_path):
 
     called_args = mock_exec.call_args.args
     assert called_args[:6] == ("pi", "run", "--auto", "--format", "json", "do something")
+
+
+import datetime
+
+
+@pytest.mark.asyncio
+async def test_on_started_callback_receives_process(tmp_path):
+    runs_dir = tmp_path / "runs"
+    sessions_dir = tmp_path / "sessions"
+    adapter = PiAdapter(_cfg(), runs_dir, sessions_dir)
+    output_file = tmp_path / "output.txt"
+
+    fake_proc = MagicMock()
+    fake_proc.pid = 12345
+    fake_proc.stdout = _stdout_lines(b"ok\n")
+    fake_proc.wait = AsyncMock(return_value=0)
+
+    seen_pids = []
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=fake_proc)):
+        await adapter.run(
+            prompt="do something",
+            session="new",
+            working_dir=str(tmp_path),
+            timeout_s=10,
+            output_file=output_file,
+            on_started=lambda proc: seen_pids.append(proc.pid),
+        )
+
+    assert seen_pids == [12345]
+
+
+def test_base_adapter_transcript_path_defaults_to_none(tmp_path):
+    from cc_orchestrator.workers.base import WorkerAdapter
+
+    class _Minimal(WorkerAdapter):
+        async def run(self, prompt, session, working_dir, timeout_s, output_file, on_started=None):
+            raise NotImplementedError
+
+        def extraction_patterns(self):
+            return {}
+
+    adapter = _Minimal()
+    assert adapter.transcript_path(str(tmp_path), datetime.datetime.now(datetime.timezone.utc)) is None
+
+
+def test_pi_transcript_path_finds_newest_file_after_cutoff(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    working_dir = tmp_path / "myproject"
+    working_dir.mkdir()
+    abs_working_dir = str(working_dir.resolve())
+    mangled = "-" + abs_working_dir.replace("/", "-") + "--"
+    session_dir = fake_home / ".pi" / "agent" / "sessions" / mangled
+    session_dir.mkdir(parents=True)
+
+    old_file = session_dir / "2020-01-01T00-00-00-000Z_old.jsonl"
+    old_file.write_text("{}\n")
+    new_file = session_dir / "2026-10-05T12-00-00-000Z_new.jsonl"
+    new_file.write_text("{}\n")
+
+    import os
+    import time
+    now = time.time()
+    os.utime(old_file, (now - 1000, now - 1000))
+    os.utime(new_file, (now, now))
+
+    adapter = PiAdapter(_cfg(), tmp_path / "runs", tmp_path / "sessions")
+    started_after = datetime.datetime.fromtimestamp(now - 10, tz=datetime.timezone.utc)
+
+    found = adapter.transcript_path(str(working_dir), started_after)
+    assert found == new_file
+
+
+def test_pi_transcript_path_returns_none_when_session_dir_missing(tmp_path, monkeypatch):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    adapter = PiAdapter(_cfg(), tmp_path / "runs", tmp_path / "sessions")
+    started_after = datetime.datetime.now(datetime.timezone.utc)
+
+    found = adapter.transcript_path(str(tmp_path / "no-such-project"), started_after)
+    assert found is None
