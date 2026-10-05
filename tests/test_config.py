@@ -20,11 +20,6 @@ workers:
     new_session_flag: "--new"
     continue_flag: "--continue"
     session_id_flag: "--session"
-  qoder:
-    bin: qoder
-    new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
 haiku_model: "claude-haiku-4-5-20251001"
 anthropic_api_key_env: "ANTHROPIC_API_KEY"
 """)
@@ -44,11 +39,6 @@ max_retries: 3
 workers:
   pi:
     bin: pi
-    new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
-  qoder:
-    bin: qoder
     new_session_flag: ""
     continue_flag: ""
     session_id_flag: ""

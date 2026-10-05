@@ -1,16 +1,15 @@
 max_retries: 3
 
-# Role convention enforced by the server (see ROLE_ASSIGNMENTS in server.py):
-#   task_type="implementation"     -> agent="pi"      (implements stories)
-#   task_type="code_review_heavy"  -> agent="qoder"   (thorough/slow review)
-#   task_type="code_review_light"  -> unrestricted    (fast/first-pass review;
-#                                       dispatch to qoder or pi for a second opinion)
-# Dispatch independent reviewers in parallel — dispatch_worker runs each CLI as
-# an asyncio subprocess, so concurrent calls don't queue behind each other.
+# Dispatch independent sub-tasks in parallel — dispatch_worker runs each CLI
+# as an asyncio subprocess, so concurrent calls don't queue behind each
+# other. Fire off several dispatch_worker calls in the same turn for
+# unrelated sub-tasks (e.g. two independent stories, or an implementation
+# task alongside a review task) and poll each run_id independently.
 #
-# OpenCode was removed as a worker: its headless-mode CLI invocation kept
-# regressing back to printing top-level --help instead of running, across
-# multiple fix attempts. Pi and Qoder have run reliably in headless mode.
+# OpenCode and Qoder were removed as workers (see README) — pi is the only
+# supported worker today. The adapter interface in cc_orchestrator/workers/
+# is written so a new worker is just a new adapter class, not an interface
+# change.
 
 workers:
   pi:
@@ -24,15 +23,15 @@ workers:
     new_session_flag: ""
     continue_flag: "--continue"
     session_id_flag: "--session"
-  qoder:
-    # Invocation: qoder --dangerously-skip-permissions --print <prompt>
-    bin: qoder
-    extra_flags:
-      - "--dangerously-skip-permissions"
-      - "--print"              # non-interactive mode
-    new_session_flag: ""
-    continue_flag: "--continue"
-    session_id_flag: "--resume"
 
 haiku_model: "claude-haiku-4-5-20251001"
 anthropic_api_key_env: "ANTHROPIC_API_KEY"
+
+# Watcher tuning (optional; defaults shown). The watcher is a background
+# task that tails pi's own session transcript and git status while a
+# dispatched run is still going, so a stuck or error-looping run can be
+# flagged well before timeout_s elapses instead of only being discoverable
+# after the fact.
+watch_interval_s: 60       # seconds between watcher polls
+idle_threshold_s: 300      # no transcript activity for this long -> stall alert
+error_loop_threshold: 3    # this many consecutive same-tool isError results -> error-loop alert

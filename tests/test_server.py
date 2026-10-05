@@ -1,8 +1,6 @@
 import json
-import os
 import time
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 import pytest
 
 from cc_orchestrator.server import _handle_dispatch, _handle_get_output
@@ -14,11 +12,6 @@ def _write_config(tmp_path: Path) -> Path:
 max_retries: 3
 workers:
   pi:
-    bin: echo
-    new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
-  qoder:
     bin: echo
     new_session_flag: ""
     continue_flag: ""
@@ -69,67 +62,9 @@ async def test_dispatch_unknown_agent_returns_error(tmp_path, monkeypatch):
         working_dir=str(tmp_path),
         timeout_s=10,
         task_type="implementation",
-        override_role=True,  # bypass role check so we exercise the unknown-agent path
     )
     assert result["status"] == "failed"
     assert "unknown" in result["summary"].lower()
-
-
-@pytest.mark.asyncio
-async def test_dispatch_rejects_role_mismatch(tmp_path, monkeypatch):
-    _setup_home(tmp_path, monkeypatch)
-
-    result = await _handle_dispatch(
-        agent="qoder",
-        prompt="implement the thing",
-        session="new",
-        working_dir=str(tmp_path),
-        timeout_s=10,
-        task_type="implementation",
-    )
-    assert result["status"] == "failed"
-    assert "pi" in result["summary"]
-    assert "override_role" in result["summary"]
-
-
-@pytest.mark.asyncio
-async def test_dispatch_override_role_bypasses_mismatch(tmp_path, monkeypatch):
-    _setup_home(tmp_path, monkeypatch)
-
-    result = await _handle_dispatch(
-        agent="qoder",
-        prompt="implement the thing",
-        session="new",
-        working_dir=str(tmp_path),
-        timeout_s=10,
-        task_type="implementation",
-        override_role=True,
-    )
-    assert result["status"] in ("completed", "failed", "low_confidence")
-    assert result["agent"] == "qoder"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_review_role_assignments(tmp_path, monkeypatch):
-    _setup_home(tmp_path, monkeypatch)
-
-    heavy = await _handle_dispatch(
-        agent="qoder", prompt="review", session="new", working_dir=str(tmp_path),
-        timeout_s=10, task_type="code_review_heavy",
-    )
-    light = await _handle_dispatch(
-        agent="pi", prompt="review", session="new", working_dir=str(tmp_path),
-        timeout_s=10, task_type="code_review_light",
-    )
-    mismatched = await _handle_dispatch(
-        agent="pi", prompt="review", session="new", working_dir=str(tmp_path),
-        timeout_s=10, task_type="code_review_heavy",
-    )
-
-    assert heavy["status"] != "failed" or "unknown" not in heavy["summary"].lower()
-    assert light["status"] != "failed" or "unknown" not in light["summary"].lower()
-    assert mismatched["status"] == "failed"
-    assert "qoder" in mismatched["summary"]
 
 
 @pytest.mark.asyncio
@@ -145,12 +80,6 @@ workers:
     new_session_flag: ""
     continue_flag: ""
     session_id_flag: ""
-  qoder:
-    bin: sh
-    command_prefix: ["-c"]
-    new_session_flag: ""
-    continue_flag: ""
-    session_id_flag: ""
 haiku_model: "claude-haiku-4-5-20251001"
 anthropic_api_key_env: "ANTHROPIC_API_KEY"
 """)
@@ -160,11 +89,11 @@ anthropic_api_key_env: "ANTHROPIC_API_KEY"
     start = time.monotonic()
     results = await asyncio.gather(
         _handle_dispatch(
-            agent="qoder", prompt="sleep 1 && echo heavy done", session="new",
-            working_dir=str(tmp_path), timeout_s=10, task_type="code_review_heavy",
+            agent="pi", prompt="sleep 1 && echo one done", session="new",
+            working_dir=str(tmp_path), timeout_s=10, task_type="code_review_light",
         ),
         _handle_dispatch(
-            agent="pi", prompt="sleep 1 && echo light done", session="new",
+            agent="pi", prompt="sleep 1 && echo two done", session="new",
             working_dir=str(tmp_path), timeout_s=10, task_type="code_review_light",
         ),
     )

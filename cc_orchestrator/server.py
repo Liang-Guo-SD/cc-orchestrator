@@ -14,29 +14,8 @@ from cc_orchestrator.models import Claims
 from cc_orchestrator.summarizer import summarize
 from cc_orchestrator.verifier import generate_targets
 from cc_orchestrator.workers.pi import PiAdapter
-from cc_orchestrator.workers.qoder import QoderAdapter
 
 mcp = _MCPClass("cc-orchestrator")
-
-# Role assignments: which agent(s) a task_type is expected to go to.
-# Pi implements; Qoder does heavy/thorough review. OpenCode was removed after
-# repeated headless-mode regressions (see README). "code_review_light" is left
-# unrestricted — dispatch it to qoder or pi for a fast/independent second opinion.
-# Unlisted task_types (e.g. "verification", "close_out", "code_review") are unrestricted.
-ROLE_ASSIGNMENTS: dict[str, set[str]] = {
-    "implementation": {"pi"},
-    "code_review_heavy": {"qoder"},
-}
-
-
-def _role_mismatch(agent: str, task_type: str) -> str | None:
-    allowed = ROLE_ASSIGNMENTS.get(task_type)
-    if allowed is None or agent in allowed:
-        return None
-    return (
-        f"task_type '{task_type}' is assigned to {sorted(allowed)}, got agent='{agent}'. "
-        f"Pass override_role=True to bypass this convention."
-    )
 
 
 def _base_dir() -> Path:
@@ -49,10 +28,7 @@ def _make_run_id(agent: str) -> str:
 
 
 def _get_adapter(agent: str, config):
-    adapters = {
-        "pi": PiAdapter,
-        "qoder": QoderAdapter,
-    }
+    adapters = {"pi": PiAdapter}
     if agent not in adapters:
         return None
     worker_cfg = config.workers.get(agent)
@@ -85,18 +61,12 @@ async def _handle_dispatch(
     working_dir: str,
     timeout_s: int,
     task_type: str,
-    override_role: bool = False,
 ) -> dict:
-    if not override_role:
-        mismatch = _role_mismatch(agent, task_type)
-        if mismatch:
-            return _error_result(agent, mismatch)
-
     config = load_config()
     adapter = _get_adapter(agent, config)
 
     if adapter is None:
-        return _error_result(agent, f"unknown agent '{agent}'; valid agents: pi, qoder")
+        return _error_result(agent, f"unknown agent '{agent}'; valid agents: pi")
 
     runs_dir = _base_dir() / "runs"
     run_id = _make_run_id(agent)
@@ -177,15 +147,8 @@ async def dispatch_worker(
     working_dir: str = ".",
     timeout_s: int = 1800,
     task_type: str = "implementation",
-    override_role: bool = False,
 ) -> dict:
     """Dispatch a task prompt to a worker CLI agent and return structured results.
-
-    Role convention (enforced unless override_role=True):
-      - task_type="implementation"     -> agent="pi"
-      - task_type="code_review_heavy"  -> agent="qoder"
-    Other task_types (e.g. "code_review_light", "verification", "close_out",
-    "code_review") are unrestricted.
 
     Runs the worker CLI as an asyncio subprocess, so independent dispatch_worker
     calls (e.g. two fresh sessions reviewing the same diff for a second opinion)
@@ -193,7 +156,7 @@ async def dispatch_worker(
     behind each other.
     """
     return await _handle_dispatch(
-        agent, prompt, session, working_dir, timeout_s, task_type, override_role
+        agent, prompt, session, working_dir, timeout_s, task_type
     )
 
 
