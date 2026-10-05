@@ -141,32 +141,38 @@ async def watch_run(
     last_entry_time = started_at
 
     while True:
-        now = datetime.datetime.now(datetime.timezone.utc)
+        try:
+            now = datetime.datetime.now(datetime.timezone.utc)
 
-        if transcript_file is None:
-            transcript_file = adapter.transcript_path(working_dir, started_at)
+            if transcript_file is None:
+                transcript_file = adapter.transcript_path(working_dir, started_at)
 
-        if transcript_file is not None:
-            entries, offset = parse_new_entries(transcript_file, offset)
-            if entries:
-                last_entry_time = now
-                tool_results.extend(extract_tool_results(entries))
-                tool_results = tool_results[-20:]
+            if transcript_file is not None:
+                entries, offset = parse_new_entries(transcript_file, offset)
+                if entries:
+                    last_entry_time = now
+                    tool_results.extend(extract_tool_results(entries))
+                    tool_results = tool_results[-20:]
 
-        idle_seconds = (now - last_entry_time).total_seconds()
+            idle_seconds = (now - last_entry_time).total_seconds()
 
-        alert = detect_error_loop(tool_results, error_loop_threshold)
-        if alert is None and idle_seconds > idle_threshold_s and is_alive():
-            alert = f"no transcript activity for {int(idle_seconds)}s — process alive but idle"
+            alert = detect_error_loop(tool_results, error_loop_threshold)
+            if alert is None and idle_seconds > idle_threshold_s and is_alive():
+                alert = f"no transcript activity for {int(idle_seconds)}s — process alive but idle"
 
-        files_touched = touched_files_from_git(working_dir)
+            files_touched = touched_files_from_git(working_dir)
 
-        progress_file.write_text(json.dumps({
-            "status": "running",
-            "alert": alert,
-            "idle_seconds": int(idle_seconds),
-            "files_touched": files_touched,
-        }))
+            progress_file.write_text(json.dumps({
+                "status": "running",
+                "alert": alert,
+                "idle_seconds": int(idle_seconds),
+                "files_touched": files_touched,
+            }))
+        except Exception:
+            # A single tick's failure (e.g. a transient stat() race, or an
+            # adapter misbehaving) must not kill the loop -- the docstring's
+            # "never raises" promise holds even when a tick itself blows up.
+            pass
 
         if not is_alive():
             break

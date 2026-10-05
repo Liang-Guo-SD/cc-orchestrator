@@ -190,3 +190,38 @@ async def test_watch_run_raises_stall_alert_when_idle_too_long(tmp_path):
     progress = json.loads((run_dir / "progress.json").read_text())
     assert progress["alert"] is not None
     assert "idle" in progress["alert"] or "no transcript activity" in progress["alert"]
+
+
+@pytest.mark.asyncio
+async def test_watch_run_survives_a_raising_adapter_and_still_terminates(tmp_path):
+    """A single tick's exception (e.g. transcript_path raising) must not kill the
+    watcher loop outright -- it must keep polling until is_alive() is False,
+    matching the docstring's "never raises" promise.
+    """
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    working_dir = tmp_path / "proj"
+    working_dir.mkdir()
+
+    adapter = MagicMock()
+    adapter.transcript_path.side_effect = RuntimeError("boom: simulated transcript lookup failure")
+
+    alive_flags = [True, True, False]
+
+    def is_alive():
+        return alive_flags.pop(0) if alive_flags else False
+
+    # Must not raise.
+    await watch_run(
+        run_dir=run_dir,
+        adapter=adapter,
+        working_dir=str(working_dir),
+        started_at=datetime.datetime.now(datetime.timezone.utc),
+        is_alive=is_alive,
+        watch_interval_s=0.01,
+        idle_threshold_s=300.0,
+        error_loop_threshold=3,
+    )
+
+    # The loop must have kept ticking (is_alive was consulted until exhausted).
+    assert alive_flags == []

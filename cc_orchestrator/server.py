@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import os
+import traceback
 import uuid
 from pathlib import Path
 
@@ -15,7 +16,7 @@ except ModuleNotFoundError:
 from cc_orchestrator.config import load_config
 from cc_orchestrator.summarizer import summarize, summarize_progress
 from cc_orchestrator.verifier import generate_targets
-from cc_orchestrator.watcher import watch_run
+from cc_orchestrator.watcher import touched_files_from_git, watch_run
 from cc_orchestrator.workers.pi import PiAdapter
 
 mcp = _MCPClass("cc-orchestrator")
@@ -94,6 +95,7 @@ async def _run_and_finalize(
 ) -> None:
     output_file = run_dir / "output.txt"
     meta_file = run_dir / "meta.json"
+    progress_file = run_dir / "progress.json"
 
     def _on_started(proc) -> None:
         meta = _read_json(meta_file) or {}
@@ -124,61 +126,92 @@ async def _run_and_finalize(
         )
     )
 
-    adapter_result = await worker_task
+    try:
+        adapter_result = await worker_task
+    except Exception:
+        watcher_task.cancel()
+        try:
+            await watcher_task
+        except asyncio.CancelledError:
+            pass
+        (run_dir / "result.json").write_text(json.dumps(_error_result(
+            adapter._agent_name,
+            f"worker crashed unexpectedly: {traceback.format_exc()}",
+        )))
+        return
+
     watcher_task.cancel()
     try:
         await watcher_task
     except asyncio.CancelledError:
         pass
 
-    raw_text = output_file.read_text(errors="replace") if output_file.exists() else ""
-    api_key = os.environ.get(config.anthropic_api_key_env)
+    # Everything below is bookkeeping on an already-finished worker -- a
+    # run must never get stuck reporting "running" forever because this
+    # part failed, so any exception here still produces a terminal result.
+    try:
+        # Carry forward whatever the watcher last observed rather than
+        # discarding it -- this is the evidence (files touched, any alert)
+        # that matters most on a timeout, when raw_text below is typically
+        # empty.
+        last_progress = _read_json(progress_file) or {}
+        files_touched = last_progress.get("files_touched") or touched_files_from_git(working_dir)
+        alert = last_progress.get("alert")
+        idle_seconds = last_progress.get("idle_seconds", 0)
 
-    claims, summary, confidence = summarize(
-        raw_text=raw_text,
-        exit_code=adapter_result.exit_code,
-        task_type=task_type,
-        adapter_patterns=adapter.extraction_patterns(),
-        haiku_model=config.haiku_model,
-        api_key=api_key,
-    )
+        raw_text = output_file.read_text(errors="replace") if output_file.exists() else ""
+        api_key = os.environ.get(config.anthropic_api_key_env)
 
-    if adapter_result.exit_code == 124:
-        status = "timeout"
-    elif adapter_result.exit_code != 0:
-        status = "failed"
-    elif confidence < 0.6:
-        status = "low_confidence"
-    else:
-        status = "completed"
+        claims, summary, confidence = summarize(
+            raw_text=raw_text,
+            exit_code=adapter_result.exit_code,
+            task_type=task_type,
+            adapter_patterns=adapter.extraction_patterns(),
+            haiku_model=config.haiku_model,
+            api_key=api_key,
+        )
 
-    targets = [] if status == "low_confidence" else generate_targets(claims, working_dir)
+        if adapter_result.exit_code == 124:
+            status = "timeout"
+        elif adapter_result.exit_code != 0:
+            status = "failed"
+        elif confidence < 0.6:
+            status = "low_confidence"
+        else:
+            status = "completed"
 
-    result = {
-        "run_id": run_id,
-        "agent": adapter._agent_name,
-        "status": status,
-        "summary": summary,
-        "alert": None,
-        "idle_seconds": 0,
-        "files_touched": [],
-        "claims": {
-            "tests_passed": claims.tests_passed,
-            "tests_failed": claims.tests_failed,
-            "tests_error": claims.tests_error,
-            "files_changed": claims.files_changed,
-            "commit_hash": claims.commit_hash,
-            "exit_code": claims.exit_code,
-            "important_findings": claims.important_findings,
-        },
-        "verification_targets": [
-            {"command": t.command, "expected_pattern": t.expected_pattern, "description": t.description}
-            for t in targets
-        ],
-        "raw_output_path": str(output_file),
-        "parent_run_id": None,
-    }
-    (run_dir / "result.json").write_text(json.dumps(result))
+        targets = [] if status == "low_confidence" else generate_targets(claims, working_dir)
+
+        result = {
+            "run_id": run_id,
+            "agent": adapter._agent_name,
+            "status": status,
+            "summary": summary,
+            "alert": alert,
+            "idle_seconds": idle_seconds,
+            "files_touched": files_touched,
+            "claims": {
+                "tests_passed": claims.tests_passed,
+                "tests_failed": claims.tests_failed,
+                "tests_error": claims.tests_error,
+                "files_changed": claims.files_changed,
+                "commit_hash": claims.commit_hash,
+                "exit_code": claims.exit_code,
+                "important_findings": claims.important_findings,
+            },
+            "verification_targets": [
+                {"command": t.command, "expected_pattern": t.expected_pattern, "description": t.description}
+                for t in targets
+            ],
+            "raw_output_path": str(output_file),
+            "parent_run_id": None,
+        }
+        (run_dir / "result.json").write_text(json.dumps(result))
+    except Exception:
+        (run_dir / "result.json").write_text(json.dumps(_error_result(
+            adapter._agent_name,
+            f"finalize crashed unexpectedly: {traceback.format_exc()}",
+        )))
 
 
 async def _handle_dispatch(

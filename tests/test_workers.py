@@ -67,6 +67,30 @@ async def test_adapter_returns_exit_code_127_when_binary_missing(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_adapter_returns_exit_code_126_when_binary_not_executable(tmp_path):
+    not_executable = tmp_path / "not_executable_binary"
+    not_executable.write_text("#!/bin/sh\necho hi\n")
+    not_executable.chmod(0o644)  # no execute bit
+
+    runs_dir = tmp_path / "runs"
+    sessions_dir = tmp_path / "sessions"
+    adapter = PiAdapter(_cfg(bin_name=str(not_executable)), runs_dir, sessions_dir)
+    output_file = tmp_path / "output.txt"
+
+    result = await adapter.run(
+        prompt="do something",
+        session="new",
+        working_dir=str(tmp_path),
+        timeout_s=10,
+        output_file=output_file,
+    )
+
+    assert result.exit_code == 126
+    assert output_file.exists()
+    assert "permission" in output_file.read_text().lower()
+
+
+@pytest.mark.asyncio
 async def test_adapter_returns_timeout_exit_code(tmp_path):
     runs_dir = tmp_path / "runs"
     sessions_dir = tmp_path / "sessions"
@@ -183,6 +207,21 @@ def test_base_adapter_transcript_path_defaults_to_none(tmp_path):
     assert adapter.transcript_path(str(tmp_path), datetime.datetime.now(datetime.timezone.utc)) is None
 
 
+def _pi_filename(dt: datetime.datetime, suffix: str) -> str:
+    """Build a filename matching pi's real convention:
+    <YYYY-MM-DDTHH-MM-SS-mmmZ>_<uuid-ish suffix>.jsonl
+    """
+    return f"{dt.strftime('%Y-%m-%dT%H-%M-%S')}-{dt.microsecond // 1000:03d}Z_{suffix}.jsonl"
+
+
+def _session_dir_for(fake_home: Path, working_dir: Path) -> Path:
+    abs_working_dir = str(working_dir.resolve())
+    mangled = "-" + abs_working_dir.replace("/", "-") + "--"
+    session_dir = fake_home / ".pi" / "agent" / "sessions" / mangled
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
+
 def test_pi_transcript_path_finds_newest_file_after_cutoff(tmp_path, monkeypatch):
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -190,27 +229,59 @@ def test_pi_transcript_path_finds_newest_file_after_cutoff(tmp_path, monkeypatch
 
     working_dir = tmp_path / "myproject"
     working_dir.mkdir()
-    abs_working_dir = str(working_dir.resolve())
-    mangled = "-" + abs_working_dir.replace("/", "-") + "--"
-    session_dir = fake_home / ".pi" / "agent" / "sessions" / mangled
-    session_dir.mkdir(parents=True)
+    session_dir = _session_dir_for(fake_home, working_dir)
 
-    old_file = session_dir / "2020-01-01T00-00-00-000Z_old.jsonl"
+    now = datetime.datetime.now(datetime.timezone.utc)
+    old_file = session_dir / _pi_filename(now - datetime.timedelta(hours=1), "old")
     old_file.write_text("{}\n")
-    new_file = session_dir / "2026-10-05T12-00-00-000Z_new.jsonl"
+    new_file = session_dir / _pi_filename(now, "new")
     new_file.write_text("{}\n")
 
-    import os
-    import time
-    now = time.time()
-    os.utime(old_file, (now - 1000, now - 1000))
-    os.utime(new_file, (now, now))
-
     adapter = PiAdapter(_cfg(), tmp_path / "runs", tmp_path / "sessions")
-    started_after = datetime.datetime.fromtimestamp(now - 10, tz=datetime.timezone.utc)
+    started_after = now - datetime.timedelta(seconds=1)
 
     found = adapter.transcript_path(str(working_dir), started_after)
     assert found == new_file
+
+
+def test_pi_transcript_path_ignores_stale_sibling_file_touched_at_dispatch_time(tmp_path, monkeypatch):
+    """Regression: selection must be based on the filename's own creation
+    timestamp, not mtime. A sibling transcript from an EARLIER dispatch
+    (filename timestamp before our started_after) must never be selected,
+    even if its mtime looks fresh (e.g. a prior run still writing to it, or
+    its file simply being touched) at the moment our dispatch starts.
+    """
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    working_dir = tmp_path / "myproject"
+    working_dir.mkdir()
+    session_dir = _session_dir_for(fake_home, working_dir)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    # A previous run's transcript: created well before our dispatch, but
+    # its mtime is "now" because it's still being appended to.
+    stale_sibling = session_dir / _pi_filename(now - datetime.timedelta(minutes=10), "stale")
+    stale_sibling.write_text("{}\n")
+    os_touch(stale_sibling, now.timestamp())
+
+    adapter = PiAdapter(_cfg(), tmp_path / "runs", tmp_path / "sessions")
+    started_after = now  # our dispatch starts now; stale_sibling predates it
+
+    found = adapter.transcript_path(str(working_dir), started_after)
+    assert found is None, "a stale sibling transcript must not be picked just because its mtime is fresh"
+
+    # Once OUR dispatch's own transcript file actually appears, it must win.
+    ours = session_dir / _pi_filename(now + datetime.timedelta(seconds=2), "ours")
+    ours.write_text("{}\n")
+    found = adapter.transcript_path(str(working_dir), started_after)
+    assert found == ours
+
+
+def os_touch(path: Path, mtime: float) -> None:
+    import os
+    os.utime(path, (mtime, mtime))
 
 
 def test_pi_transcript_path_returns_none_when_session_dir_missing(tmp_path, monkeypatch):

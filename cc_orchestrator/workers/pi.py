@@ -1,9 +1,31 @@
 from __future__ import annotations
 
 import datetime
+import re
 from pathlib import Path
 
 from cc_orchestrator.workers.cli_adapter import CliAdapter
+
+# pi's session filenames start with their own creation timestamp:
+# "2026-10-05T12-45-52-117Z_<uuid>.jsonl". This is the file's creation
+# time as pi itself recorded it -- deliberately not the filesystem mtime,
+# which keeps growing as pi appends to the file throughout the run and so
+# cannot distinguish "created after our dispatch" from "still being
+# written to by an earlier, unrelated run".
+_FILENAME_TIMESTAMP_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z_"
+)
+
+
+def _parse_filename_timestamp(path: Path) -> datetime.datetime | None:
+    match = _FILENAME_TIMESTAMP_RE.match(path.name)
+    if not match:
+        return None
+    year, month, day, hour, minute, second, millis = (int(g) for g in match.groups())
+    return datetime.datetime(
+        year, month, day, hour, minute, second, millis * 1000,
+        tzinfo=datetime.timezone.utc,
+    )
 
 
 class PiAdapter(CliAdapter):
@@ -30,12 +52,14 @@ class PiAdapter(CliAdapter):
         session-continue feature) -- conflating the two would point the
         watcher at the wrong directory.
 
-        Among files in that directory modified at or after `started_after`
-        (minus a small clock-skew buffer), returns the earliest one -- the
-        file closest to our own dispatch's start time. If two dispatches
+        Among files whose own filename-encoded creation timestamp is at or
+        after `started_after` (minus a small clock-skew buffer), returns
+        the earliest one -- the file closest to our own dispatch's start
+        time. Files whose name doesn't match pi's timestamp convention are
+        skipped as not recognizably pi's own transcripts. If two dispatches
         start within the buffer window on the same working_dir, this can
-        pick the wrong one; this is a known heuristic limitation, not a
-        correctness guarantee.
+        still pick the wrong one; that remains a known heuristic
+        limitation, not a correctness guarantee.
         """
         abs_path = str(Path(working_dir).resolve())
         mangled = "-" + abs_path.replace("/", "-") + "--"
@@ -43,9 +67,14 @@ class PiAdapter(CliAdapter):
         if not session_dir.exists():
             return None
 
-        cutoff = started_after.timestamp() - 5  # buffer for clock skew
-        candidates = sorted(
-            (p for p in session_dir.glob("*.jsonl") if p.stat().st_mtime >= cutoff),
-            key=lambda p: p.stat().st_mtime,
-        )
-        return candidates[0] if candidates else None
+        cutoff = started_after - datetime.timedelta(seconds=5)  # buffer for clock skew
+        dated_candidates: list[tuple[datetime.datetime, Path]] = []
+        for p in session_dir.glob("*.jsonl"):
+            created_at = _parse_filename_timestamp(p)
+            if created_at is not None and created_at >= cutoff:
+                dated_candidates.append((created_at, p))
+
+        if not dated_candidates:
+            return None
+        dated_candidates.sort(key=lambda pair: pair[0])
+        return dated_candidates[0][1]

@@ -68,6 +68,9 @@ class CliAdapter(WorkerAdapter):
         except FileNotFoundError:
             output_file.write_text(f"error: binary '{self._cfg.bin}' not found on PATH\n")
             return AdapterResult(exit_code=127, session_id=None)
+        except PermissionError:
+            output_file.write_text(f"error: permission denied executing '{self._cfg.bin}'\n")
+            return AdapterResult(exit_code=126, session_id=None)
 
         if on_started is not None:
             on_started(proc)

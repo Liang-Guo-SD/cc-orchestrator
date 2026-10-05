@@ -238,3 +238,104 @@ def test_get_output_returns_last_n_lines(tmp_path, monkeypatch):
     returned_lines = result.strip().splitlines()
     assert len(returned_lines) == 10
     assert returned_lines[-1] == "line 499"
+
+
+@pytest.mark.asyncio
+async def test_unexpected_adapter_exception_still_produces_terminal_result(tmp_path, monkeypatch):
+    """A run must never get stuck reporting "running" forever. If the adapter
+    (or the watcher) raises something unanticipated, _run_and_finalize must
+    still write a terminal result.json rather than dying silently inside an
+    untracked background task.
+    """
+    _setup_home(tmp_path, monkeypatch)
+
+    fake_adapter = MagicMock()
+    fake_adapter._agent_name = "pi"
+    fake_adapter.extraction_patterns.return_value = {}
+    fake_adapter.transcript_path.return_value = None
+    fake_adapter.run = AsyncMock(side_effect=RuntimeError("boom: simulated adapter crash"))
+
+    with patch("cc_orchestrator.server._get_adapter", return_value=fake_adapter):
+        dispatched = await _handle_dispatch(
+            agent="pi", prompt="irrelevant", session="new",
+            working_dir=str(tmp_path), timeout_s=10, task_type="implementation",
+        )
+        run_id = dispatched["run_id"]
+
+        done = await _wait_until(lambda: _handle_get_status(run_id)["status"] != "running")
+
+    assert done, "run never reached a terminal status after the adapter raised"
+    final = _handle_get_status(run_id)
+    assert final["status"] == "failed"
+    assert "boom" in final["summary"]
+
+
+@pytest.mark.asyncio
+async def test_exception_after_worker_completes_still_produces_terminal_result(tmp_path, monkeypatch):
+    """Not just the worker await -- an exception anywhere in the finalize
+    logic (summarize, generate_targets, the result.json write itself) must
+    still leave a terminal result.json, not an orphaned "running" run.
+    """
+    _setup_home(tmp_path, monkeypatch)
+
+    with patch(
+        "cc_orchestrator.server.summarize",
+        side_effect=RuntimeError("boom: simulated summarize crash"),
+    ):
+        dispatched = await _handle_dispatch(
+            agent="pi", prompt="echo hello", session="new",
+            working_dir=str(tmp_path), timeout_s=10, task_type="implementation",
+        )
+        run_id = dispatched["run_id"]
+
+        done = await _wait_until(lambda: _handle_get_status(run_id)["status"] != "running")
+
+    assert done, "run never reached a terminal status after summarize() raised"
+    final = _handle_get_status(run_id)
+    assert final["status"] == "failed"
+    assert "boom" in final["summary"]
+
+
+@pytest.mark.asyncio
+async def test_completed_run_carries_forward_watcher_evidence(tmp_path, monkeypatch):
+    """The terminal result must not discard what the watcher observed --
+    files touched (and any alert) must survive into result.json, not be
+    hardcoded to empty/None.
+    """
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("""
+max_retries: 3
+workers:
+  pi:
+    bin: sh
+    command_prefix: ["-c"]
+    new_session_flag: ""
+    continue_flag: ""
+    session_id_flag: ""
+haiku_model: "claude-haiku-4-5-20251001"
+anthropic_api_key_env: "ANTHROPIC_API_KEY"
+watch_interval_s: 0.01
+""")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".cc-orchestrator").mkdir()
+    import shutil
+    shutil.copy(cfg, tmp_path / ".cc-orchestrator" / "config.yaml")
+
+    work_dir = tmp_path / "proj"
+    work_dir.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", "-q"], cwd=work_dir, check=True)
+
+    dispatched = await _handle_dispatch(
+        agent="pi",
+        prompt="echo touched > touched.txt && sleep 0.3",
+        session="new", working_dir=str(work_dir), timeout_s=10,
+        task_type="implementation",
+    )
+    run_id = dispatched["run_id"]
+
+    done = await _wait_until(lambda: _handle_get_status(run_id)["status"] != "running")
+    assert done
+    final = _handle_get_status(run_id)
+    assert final["files_touched"], "result.json discarded the watcher's files_touched evidence"
+    assert any("touched.txt" in f for f in final["files_touched"])
