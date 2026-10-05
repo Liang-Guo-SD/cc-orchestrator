@@ -163,3 +163,48 @@ def test_summarize_returns_low_confidence_on_auth_error():
             api_key="bad-key",
         )
     assert confidence < 0.6
+
+
+from cc_orchestrator.summarizer import summarize_progress
+
+
+def test_summarize_progress_uses_haiku_when_api_key_present():
+    with patch("cc_orchestrator.summarizer.anthropic.Anthropic") as MockClient:
+        MockClient.return_value = _mock_anthropic("Editing app/foo.py; 2 files touched so far.")
+        summary = summarize_progress(
+            {"idle_seconds": 12, "files_touched": ["app/foo.py", "app/bar.py"], "alert": None},
+            haiku_model="claude-haiku-4-5-20251001",
+            api_key="test-key",
+        )
+    assert "foo.py" in summary or "touched" in summary
+
+
+def test_summarize_progress_falls_back_without_api_key():
+    summary = summarize_progress(
+        {"idle_seconds": 12, "files_touched": ["app/foo.py"], "alert": None},
+        haiku_model="claude-haiku-4-5-20251001",
+        api_key=None,
+    )
+    assert "1" in summary or "app/foo.py" in summary
+
+
+def test_summarize_progress_falls_back_on_api_error():
+    with patch("cc_orchestrator.summarizer.anthropic.Anthropic") as MockClient:
+        MockClient.return_value.messages.create.side_effect = (
+            __import__("anthropic").AuthenticationError.__new__(__import__("anthropic").AuthenticationError)
+        )
+        summary = summarize_progress(
+            {"idle_seconds": 5, "files_touched": [], "alert": None},
+            haiku_model="claude-haiku-4-5-20251001",
+            api_key="bad-key",
+        )
+    assert isinstance(summary, str) and summary != ""
+
+
+def test_summarize_progress_surfaces_alert_in_fallback():
+    summary = summarize_progress(
+        {"idle_seconds": 400, "files_touched": [], "alert": "no transcript activity for 400s — process alive but idle"},
+        haiku_model="claude-haiku-4-5-20251001",
+        api_key=None,
+    )
+    assert "idle" in summary

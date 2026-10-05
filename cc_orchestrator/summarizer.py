@@ -161,3 +161,55 @@ def summarize(
     summary = haiku_data.get("summary", "")
     confidence = compute_confidence(claims, task_type)
     return claims, summary, confidence
+
+
+_PROGRESS_HAIKU_PROMPT = """\
+A background coding agent dispatched as a subprocess is still running.
+Here are the latest observed facts about it:
+- idle_seconds: {idle_seconds} (seconds since its session transcript last grew)
+- files_touched: {files_touched}
+- alert: {alert}
+
+Write ONE short sentence (at most 25 words) describing its current status
+for a human monitoring it. Respond with only the sentence, no quotes, no
+markdown."""
+
+
+def _fallback_progress_summary(progress: dict) -> str:
+    if progress.get("alert"):
+        return progress["alert"]
+    files = progress.get("files_touched") or []
+    idle = progress.get("idle_seconds", 0)
+    return f"running; {len(files)} file(s) touched so far; idle {idle}s"
+
+
+def summarize_progress(
+    progress: dict,
+    haiku_model: str,
+    api_key: str | None,
+) -> str:
+    """Turn the watcher's raw facts (idle_seconds, files_touched, alert) into
+    a one-line human-readable status for a run that is still going. Falls
+    back to a deterministic sentence when no API key is configured or the
+    API call fails -- this must never raise.
+    """
+    if api_key is None:
+        return _fallback_progress_summary(progress)
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model=haiku_model,
+            max_tokens=64,
+            messages=[{
+                "role": "user",
+                "content": _PROGRESS_HAIKU_PROMPT.format(
+                    idle_seconds=progress.get("idle_seconds", 0),
+                    files_touched=progress.get("files_touched") or [],
+                    alert=progress.get("alert"),
+                ),
+            }],
+        )
+        return msg.content[0].text.strip()
+    except (anthropic.AuthenticationError, anthropic.APIError):
+        return _fallback_progress_summary(progress)
