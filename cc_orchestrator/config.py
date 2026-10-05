@@ -32,6 +32,9 @@ class OrchestratorConfig:
     workers: dict[str, WorkerConfig]
     haiku_model: str
     anthropic_api_key_env: str
+    watch_interval_s: float = 60.0
+    idle_threshold_s: float = 300.0
+    error_loop_threshold: int = 3
 
 
 def load_config(path: Path | None = None) -> OrchestratorConfig:
@@ -57,4 +60,7 @@ def load_config(path: Path | None = None) -> OrchestratorConfig:
         workers=workers,
         haiku_model=data.get("haiku_model", "claude-haiku-4-5-20251001"),
         anthropic_api_key_env=data.get("anthropic_api_key_env", "ANTHROPIC_API_KEY"),
+        watch_interval_s=float(data.get("watch_interval_s", 60.0)),
+        idle_threshold_s=float(data.get("idle_threshold_s", 300.0)),
+        error_loop_threshold=int(data.get("error_loop_threshold", 3)),
     )
